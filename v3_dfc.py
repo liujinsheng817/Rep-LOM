@@ -7,15 +7,8 @@ import torch.nn.functional as F
 
 
 
-class MobileOneBlock(nn.Module):
-    """ MobileOne building block.
-
-        This block has a multi-branched architecture at train-time
-        and plain-CNN style architecture at inference time
-        For more details, please refer to our paper:
-        `An Improved One millisecond Mobile Backbone` -
-        https://arxiv.org/pdf/2206.04040.pdf
-    """
+class MBlock(nn.Module):
+ 
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
@@ -27,7 +20,7 @@ class MobileOneBlock(nn.Module):
                  inference_mode: bool = False,
                  use_se: bool = False,
                  num_conv_branches: int = 1) -> None:
-        """ Construct a MobileOneBlock module.
+        """ Construct a MBlock module.
 
         :param in_channels: Number of channels in the input.
         :param out_channels: Number of channels produced by the block.
@@ -40,7 +33,7 @@ class MobileOneBlock(nn.Module):
         :param use_se: Whether to use SE-ReLU activations.
         :param num_conv_branches: Number of linear conv branches.
         """
-        super(MobileOneBlock, self).__init__()
+        super(MBlock, self).__init__()
         self.inference_mode = inference_mode
         self.groups = groups
         self.stride = stride
@@ -248,8 +241,8 @@ class MobileOneBlock(nn.Module):
 
 
 
-class MobileOne(nn.Module):
-    """ Simplified MobileOne Model with only one stage containing 3 branches of
+class MB(nn.Module):
+    """ Simplified MB Model with only one stage containing 3 branches of
     Depthwise and Pointwise convolutions at training time.
     """
 
@@ -275,23 +268,23 @@ class MobileOne(nn.Module):
         self.num_conv_branches = num_conv_branches
         in_planes = 3  # 输入通道数，例如，彩色图像为3
         out_planes = int(32 * width_multiplier)  # 根据需求调整通道数，并应用宽度乘数
-          # 假设每个MobileOneBlock有3个分支
+          # 假设每个MBlock有3个分支
         # Pointwise Conv
         if self.mode in ['original']:
-            self.primary_conv = MobileOneBlock(in_channels=inp, out_channels=init_channels, kernel_size=(1, 1),
+            self.primary_conv = MBlock(in_channels=inp, out_channels=init_channels, kernel_size=(1, 1),
                                                stride=(2, 1), padding=0,groups=1, inference_mode=inference_mode,
                                                use_se=None,num_conv_branches=3)
 
-            self.cheap_operation =MobileOneBlock(in_channels=init_channels, out_channels=new_channels, kernel_size=(dw_size, 1),
+            self.cheap_operation =MBlock(in_channels=init_channels, out_channels=new_channels, kernel_size=(dw_size, 1),
                                                stride=(1, 1), padding=((dw_size-1)//2,0), groups=init_channels, inference_mode=inference_mode,
                                                use_se=None,num_conv_branches=3)
 
         elif self.mode in ['attn']:
-            self.primary_conv = MobileOneBlock(in_channels=inp, out_channels=init_channels, kernel_size=(1, 1),
+            self.primary_conv = MBlock(in_channels=inp, out_channels=init_channels, kernel_size=(1, 1),
                                                stride=(2, 1), padding=0, groups=1, inference_mode=inference_mode,
                                                use_se=None, num_conv_branches=3)
 
-            self.cheap_operation = MobileOneBlock(in_channels=init_channels, out_channels=new_channels,
+            self.cheap_operation = MBlock(in_channels=init_channels, out_channels=new_channels,
                                                   kernel_size=(dw_size, 1),
                                                   stride=(1, 1), padding=((dw_size - 1) // 2, 0), groups=init_channels,
                                                   inference_mode=inference_mode,
@@ -337,8 +330,8 @@ class MobileOne(nn.Module):
 
 
 
-class RepGhostv2(nn.Module):
-    """RepGhost bottleneck w/ optional SE and support for 'original' and 'attn' modes based on layer_id"""
+class Replom(nn.Module):
+    """Replom bottleneck w/ optional SE and support for 'original' and 'attn' modes based on layer_id"""
 
     def __init__(
             self,
@@ -354,17 +347,17 @@ class RepGhostv2(nn.Module):
             layer_id=0,
             args=None
     ):
-        super(RepGhostv2, self).__init__()
+        super(Replom, self).__init__()
         has_se = se_ratio is not None and se_ratio > 0.0
 
         self.enable_shortcut = shortcut
 
 
-        # Determine mode based on the layer_id as in GhostBottleneckV2
+        # Determine mode based on the layer_id as in lomBottleneckV2
 
 
         # Point-wise expansion
-        self.ghost1 = MobileOne(
+        self.lom1 = MB(
             1,
             64,
             stride=(2,1),
@@ -373,25 +366,25 @@ class RepGhostv2(nn.Module):
             deploy=deploy,
         )
 
-        self.ghost2 = MobileOne(
+        self.lom2 = MB(
             64,
             128,
             #dw_size=5,
             stride=(2, 1),
 
-            mode='attn',  # Always 'original' as in GhostBottleneckV2
+            mode='attn',  # Always 'original' as in lomBottleneckV2
 
             deploy=deploy,
         )
 
 
-        self.ghost3 = MobileOne(
+        self.lom3 = MB(
             128,
             256,
             # dw_size=5,
             stride=(2, 1),
 
-            mode='attn',  # Always 'original' as in GhostBottleneckV2
+            mode='attn',  # Always 'original' as in lomBottleneckV2
 
             deploy=deploy,
 
@@ -401,10 +394,10 @@ class RepGhostv2(nn.Module):
 
 
     def forward(self, x):
-        # 1st repghost bottleneck
-        x = self.ghost1(x)
-        x = self.ghost2(x)
-        x = self.ghost3(x)
+        # 1st replom bottleneck
+        x = self.lom1(x)
+        x = self.lom2(x)
+        x = self.lom3(x)
         x = self.ada_pool(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
@@ -412,16 +405,16 @@ class RepGhostv2(nn.Module):
 
     '''def forward(self, x):
 
-        x = self.ghost1(x)
-        x = self.ghost2(x)
-        x = self.ghost3(x)
+        x = self.lom1(x)
+        x = self.lom2(x)
+        x = self.lom3(x)
         x = self.ada_pool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x'''
 
 
-def repghost_model_convert(model: torch.nn.Module, save_path=None, do_copy=True):
+def replom_model_convert(model: torch.nn.Module, save_path=None, do_copy=True):
     """
     taken from from https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
     """
@@ -438,7 +431,7 @@ def repghost_model_convert(model: torch.nn.Module, save_path=None, do_copy=True)
 
 
 if __name__ == '__main__':
-    model = RepGhostv2().eval()
+    model = Replom().eval()
     print(model)
     # from tools import cal_flops_params
 
@@ -451,7 +444,7 @@ if __name__ == '__main__':
     flops, params = cal_flops_params(model, input_size=input.shape)
 
     # 将模型转换为部署模式
-    deployed_model = repghost_model_convert(model, do_copy=False)
+    deployed_model = replom_model_convert(model, do_copy=False)
 
     # 打印部署后的模型结构
     print(deployed_model)
